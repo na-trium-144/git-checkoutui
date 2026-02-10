@@ -35,15 +35,17 @@ struct App {
     state: ListState,
     should_quit: bool,
     last_checked_out_branch: Option<String>,
+    page_size: usize,
 }
 
 impl App {
-    fn new(branches: Vec<BranchInfo>) -> Self {
+    fn new(branches: Vec<BranchInfo>, page_size: usize) -> Self {
         Self {
             branches,
             state: ListState::default(),
             should_quit: false,
             last_checked_out_branch: None,
+            page_size,
         }
     }
 
@@ -78,6 +80,22 @@ impl App {
     fn quit(&mut self) {
         self.should_quit = true;
     }
+
+    pub fn next_page(&mut self) {
+        let i = match self.state.selected() {
+            Some(i) => i.saturating_add(self.page_size).min(self.branches.len() - 1),
+            None => 0,
+        };
+        self.state.select(Some(i));
+    }
+
+    pub fn prev_page(&mut self) {
+        let i = match self.state.selected() {
+            Some(i) => i.saturating_sub(self.page_size),
+            None => 0,
+        };
+        self.state.select(Some(i));
+    }
 }
 
 fn main() -> Result<()> {
@@ -99,7 +117,8 @@ fn main() -> Result<()> {
         },
     )?;
 
-    let mut app = App::new(branches);
+    let page_size = (height as usize).saturating_sub(2);
+    let mut app = App::new(branches, page_size);
 
     let initial_selection = app
         .branches
@@ -227,6 +246,8 @@ fn handle_events(app: &mut App) -> io::Result<()> {
             KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => app.quit(),
             KeyCode::Down | KeyCode::Char('j') => app.next(),
             KeyCode::Up | KeyCode::Char('k')=> app.previous(),
+            KeyCode::PageDown => app.next_page(),
+            KeyCode::PageUp => app.prev_page(),
             KeyCode::Enter => {
                 if let Some(selected) = app.state.selected() {
                     app.last_checked_out_branch = Some(app.branches[selected].name.clone());
