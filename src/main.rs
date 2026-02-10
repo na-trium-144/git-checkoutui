@@ -4,10 +4,10 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
+    Terminal, TerminalOptions, Viewport,
     prelude::*,
     style::Styled,
     widgets::{Block, Borders, List, ListItem, ListState},
-    Terminal, TerminalOptions, Viewport,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -83,7 +83,9 @@ impl App {
 
     pub fn next_page(&mut self) {
         let i = match self.state.selected() {
-            Some(i) => i.saturating_add(self.page_size).min(self.branches.len() - 1),
+            Some(i) => i
+                .saturating_add(self.page_size)
+                .min(self.branches.len() - 1),
             None => 0,
         };
         self.state.select(Some(i));
@@ -120,11 +122,13 @@ fn main() -> Result<()> {
     let page_size = (height as usize).saturating_sub(2);
     let mut app = App::new(branches, page_size);
 
-    let initial_selection = app
-        .branches
-        .iter()
-        .position(|b| b.is_current)
-        .or_else(|| if app.branches.is_empty() { None } else { Some(0) });
+    let initial_selection = app.branches.iter().position(|b| b.is_current).or_else(|| {
+        if app.branches.is_empty() {
+            None
+        } else {
+            Some(0)
+        }
+    });
 
     if let Some(selected_index) = initial_selection {
         app.state.select(Some(selected_index));
@@ -156,9 +160,16 @@ fn get_pr_map() -> io::Result<HashMap<String, u32>> {
     }
 
     let pr_list_output = std::process::Command::new("gh")
-        .args(["pr", "list", "--json", "headRefName,number", "--limit", "1000"])
+        .args([
+            "pr",
+            "list",
+            "--json",
+            "headRefName,number",
+            "--limit",
+            "1000",
+        ])
         .output()?;
-    
+
     if !pr_list_output.status.success() {
         return Ok(HashMap::new()); // e.g. not a gh repository
     }
@@ -190,7 +201,11 @@ fn get_branch_info() -> io::Result<Vec<BranchInfo>> {
     .join(DELIMITER);
 
     let output = std::process::Command::new("git")
-        .args(["for-each-ref", &format!("--format={}", format), "refs/heads/"])
+        .args([
+            "for-each-ref",
+            &format!("--format={}", format),
+            "refs/heads/",
+        ])
         .output()?;
 
     if !output.status.success() {
@@ -245,7 +260,7 @@ fn handle_events(app: &mut App) -> io::Result<()> {
             KeyCode::Char('q') => app.quit(),
             KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => app.quit(),
             KeyCode::Down | KeyCode::Char('j') => app.next(),
-            KeyCode::Up | KeyCode::Char('k')=> app.previous(),
+            KeyCode::Up | KeyCode::Char('k') => app.previous(),
             KeyCode::PageDown => app.next_page(),
             KeyCode::PageUp => app.prev_page(),
             KeyCode::Enter => {
@@ -263,9 +278,7 @@ fn handle_events(app: &mut App) -> io::Result<()> {
 fn ui(f: &mut Frame, app: &mut App) {
     if app.branches.is_empty() {
         let text = "No git branches found in this directory.";
-        let block = Block::default()
-            .title("Error")
-            .borders(Borders::ALL);
+        let block = Block::default().title("Error").borders(Borders::ALL);
         let paragraph = ratatui::widgets::Paragraph::new(text).block(block);
         f.render_widget(paragraph, f.area());
         return;
@@ -291,7 +304,10 @@ fn ui(f: &mut Frame, app: &mut App) {
             let tracking_style = default_text_style.fg(Color::Cyan);
 
             let pr_span = if let Some(pr_number) = b.pr_number {
-                Span::styled(format!(" #{}", pr_number), Style::default().fg(Color::Magenta))
+                Span::styled(
+                    format!(" #{}", pr_number),
+                    Style::default().fg(Color::Magenta),
+                )
             } else {
                 Span::raw("")
             };
