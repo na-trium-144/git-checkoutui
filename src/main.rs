@@ -1,5 +1,6 @@
 use color_eyre::Result;
 use crossterm::{
+    ExecutableCommand, cursor,
     event::{self, Event, KeyCode, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
@@ -112,6 +113,7 @@ fn main() -> Result<()> {
 
     // Terminal initialization for inline rendering
     enable_raw_mode()?;
+    stdout().execute(cursor::SavePosition)?;
     let mut terminal = Terminal::with_options(
         CrosstermBackend::new(stdout()),
         TerminalOptions {
@@ -138,6 +140,8 @@ fn main() -> Result<()> {
 
     // Restore terminal
     disable_raw_mode()?;
+    stdout().execute(cursor::RestorePosition)?;
+    stdout().execute(cursor::MoveDown(height))?;
 
     if let Some(branch_name) = app.last_checked_out_branch {
         // run git checkout <branch_name>
