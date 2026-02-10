@@ -58,16 +58,6 @@ impl App {
     fn quit(&mut self) {
         self.should_quit = true;
     }
-
-    fn checkout_selected(&mut self) -> io::Result<()> {
-        if let Some(selected) = self.state.selected() {
-            let branch_name = self.branches[selected].clone();
-            checkout_branch(&branch_name)?;
-            self.last_checked_out_branch = Some(branch_name);
-        }
-        self.quit(); // Always quit after attempting checkout
-        Ok(())
-    }
 }
 
 fn main() -> Result<()> {
@@ -107,8 +97,15 @@ fn main() -> Result<()> {
     disable_raw_mode()?;
 
     if let Some(branch_name) = app.last_checked_out_branch {
-        println!("Switched to branch '{}'", branch_name);
+        // run git checkout <branch_name>
+        // and pipe the output to the parent terminal
+        let mut command = std::process::Command::new("git");
+        command.arg("checkout").arg(branch_name);
+        command.stdout(std::process::Stdio::inherit());
+        command.stderr(std::process::Stdio::inherit());
+        let _ = command.status()?; // We can ignore the result, git will print errors.
     }
+
     Ok(())
 }
 
@@ -158,7 +155,9 @@ fn handle_events(app: &mut App) -> io::Result<()> {
             KeyCode::Down | KeyCode::Char('j') => app.next(),
             KeyCode::Up | KeyCode::Char('k')=> app.previous(),
             KeyCode::Enter => {
-                app.checkout_selected()?;
+                if let Some(selected) = app.state.selected() {
+                    app.last_checked_out_branch = Some(app.branches[selected].clone());
+                }
                 app.quit();
             }
             _ => {}
@@ -192,16 +191,8 @@ fn ui(f: &mut Frame, app: &mut App) {
         )
         .highlight_symbol("> ");
 
-    f.render_stateful_widget(list, f.area(), &mut app.state);
-}
+        f.render_stateful_widget(list, f.area(), &mut app.state);
 
-fn checkout_branch(branch_name: &str) -> io::Result<()> {
-    let output = std::process::Command::new("git")
-        .args(["checkout", branch_name])
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(io::Error::new(io::ErrorKind::Other, stderr.to_string()));
     }
-    Ok(())
-}
+
+    
