@@ -5,11 +5,20 @@ use crossterm::{
 };
 use ratatui::{
     prelude::*,
+    style::Styled,
     widgets::{Block, Borders, List, ListItem, ListState},
     Terminal, TerminalOptions, Viewport,
-    style::Styled, // Add this import
 };
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::io::{self, stdout};
+
+#[derive(Deserialize)]
+#[allow(non_snake_case)]
+struct PullRequest {
+    headRefName: String,
+    number: u32,
+}
 
 struct BranchInfo {
     name: String,
@@ -17,6 +26,7 @@ struct BranchInfo {
     last_commit_date: String,
     last_commit_timestamp: i64,
     has_upstream: bool,
+    pr_number: Option<u32>,
     is_current: bool,
 }
 
@@ -119,7 +129,36 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+fn get_pr_map() -> io::Result<HashMap<String, u32>> {
+    // Check if gh is installed
+    let version_output = std::process::Command::new("gh").arg("--version").output();
+    if version_output.is_err() {
+        return Ok(HashMap::new()); // gh not found
+    }
+
+    let pr_list_output = std::process::Command::new("gh")
+        .args(["pr", "list", "--json", "headRefName,number", "--limit", "1000"])
+        .output()?;
+    
+    if !pr_list_output.status.success() {
+        return Ok(HashMap::new()); // e.g. not a gh repository
+    }
+
+    let prs: Vec<PullRequest> = match serde_json::from_slice(&pr_list_output.stdout) {
+        Ok(prs) => prs,
+        Err(_) => return Ok(HashMap::new()), // JSON parsing failed
+    };
+
+    let pr_map = prs
+        .into_iter()
+        .map(|pr| (pr.headRefName, pr.number))
+        .collect();
+
+    Ok(pr_map)
+}
+
 fn get_branch_info() -> io::Result<Vec<BranchInfo>> {
+    let pr_map = get_pr_map().unwrap_or_default();
     const DELIMITER: &str = "|";
     let format = [
         "%(HEAD)",
@@ -147,14 +186,18 @@ fn get_branch_info() -> io::Result<Vec<BranchInfo>> {
             let parts: Vec<&str> = line.split(DELIMITER).collect();
             if parts.len() == 6 {
                 let is_current = !parts[0].trim().is_empty();
+                let branch_name = parts[1].to_string();
                 let timestamp = parts[4].parse::<i64>().unwrap_or(0);
                 let has_upstream = !parts[5].trim().is_empty();
+                let pr_number = pr_map.get(&branch_name).copied();
+
                 Some(BranchInfo {
-                    name: parts[1].to_string(),
+                    name: branch_name,
                     tracking_info: parts[2].to_string(),
                     last_commit_date: parts[3].to_string(),
                     last_commit_timestamp: timestamp,
                     has_upstream,
+                    pr_number,
                     is_current,
                 })
             } else {
@@ -197,35 +240,20 @@ fn handle_events(app: &mut App) -> io::Result<()> {
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
-
     if app.branches.is_empty() {
-
         let text = "No git branches found in this directory.";
-
         let block = Block::default()
-
             .title("Error")
-
             .borders(Borders::ALL);
-
         let paragraph = ratatui::widgets::Paragraph::new(text).block(block);
-
         f.render_widget(paragraph, f.area());
-
         return;
-
     }
 
     let items: Vec<ListItem> = app
-
         .branches
-
         .iter()
-
         .map(|b| {
-
-
-
             let default_text_style = if !b.has_upstream || b.tracking_info.contains("gone") {
                 Style::default().fg(Color::DarkGray)
             } else {
@@ -241,9 +269,16 @@ fn ui(f: &mut Frame, app: &mut App) {
             let date_style = default_text_style.fg(Color::Yellow);
             let tracking_style = default_text_style.fg(Color::Cyan);
 
+            let pr_span = if let Some(pr_number) = b.pr_number {
+                Span::styled(format!(" #{}", pr_number), Style::default().fg(Color::Magenta))
+            } else {
+                Span::raw("")
+            };
+
             let line = Line::from(vec![
                 Span::styled(if b.is_current { "* " } else { "  " }, prefix_style),
                 Span::styled(&b.name, name_style),
+                pr_span,
                 Span::raw(" (").set_style(default_text_style),
                 Span::styled(&b.last_commit_date, date_style),
                 Span::raw(") ").set_style(default_text_style),
@@ -253,28 +288,14 @@ fn ui(f: &mut Frame, app: &mut App) {
         })
         .collect();
 
-
-
     let list = List::new(items)
-
         .block(Block::default().borders(Borders::ALL).title("Branches"))
-
         .highlight_style(
-
             Style::default()
-
                 .add_modifier(Modifier::REVERSED)
-
                 .fg(Color::Green),
-
         )
-
         .highlight_symbol("> ");
 
-
-
     f.render_stateful_widget(list, f.area(), &mut app.state);
-
 }
-
-    
