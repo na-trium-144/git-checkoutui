@@ -288,20 +288,21 @@ fn ui(f: &mut Frame, app: &mut App) {
         .branches
         .iter()
         .map(|b| {
-            let default_text_style = if !b.has_upstream || b.tracking_info.contains("gone") {
-                Style::default().fg(Color::DarkGray)
+            let (line_style, name_style) = if !b.has_upstream || b.tracking_info.contains("gone") {
+                (
+                    Style::default().add_modifier(Modifier::DIM),
+                    Style::default(),
+                )
             } else {
-                Style::default()
+                (
+                    Style::default(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )
             };
 
-            let prefix_style = if b.is_current {
-                Style::default().fg(Color::Green)
-            } else {
-                default_text_style // If not current, use default_text_style for prefix as well
-            };
-            let name_style = default_text_style.add_modifier(Modifier::BOLD);
-            let date_style = default_text_style.fg(Color::Yellow);
-            let tracking_style = default_text_style.fg(Color::Cyan);
+            let prefix_style = Style::default().fg(Color::Green);
+            let date_style = Style::default().fg(Color::Yellow);
+            let tracking_style = Style::default().fg(Color::Cyan);
 
             let pr_span = if let Some(pr_number) = b.pr_number {
                 Span::styled(
@@ -316,11 +317,12 @@ fn ui(f: &mut Frame, app: &mut App) {
                 Span::styled(if b.is_current { "* " } else { "  " }, prefix_style),
                 Span::styled(&b.name, name_style),
                 pr_span,
-                Span::raw(" (").set_style(default_text_style),
+                Span::raw(" ("),
                 Span::styled(&b.last_commit_date, date_style),
-                Span::raw(") ").set_style(default_text_style),
+                Span::raw(") "),
                 Span::styled(&b.tracking_info, tracking_style),
-            ]);
+            ])
+            .set_style(line_style);
             ListItem::new(line)
         })
         .collect();
