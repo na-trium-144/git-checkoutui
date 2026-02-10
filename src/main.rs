@@ -14,6 +14,7 @@ struct App {
     branches: Vec<String>,
     state: ListState,
     should_quit: bool,
+    last_checked_out_branch: Option<String>,
 }
 
 impl App {
@@ -22,6 +23,7 @@ impl App {
             branches,
             state: ListState::default(),
             should_quit: false,
+            last_checked_out_branch: None,
         }
     }
 
@@ -57,11 +59,13 @@ impl App {
         self.should_quit = true;
     }
 
-    fn checkout_selected(&self) -> io::Result<()> {
+    fn checkout_selected(&mut self) -> io::Result<()> {
         if let Some(selected) = self.state.selected() {
-            let branch_name = &self.branches[selected];
-            checkout_branch(branch_name)?;
+            let branch_name = self.branches[selected].clone();
+            checkout_branch(&branch_name)?;
+            self.last_checked_out_branch = Some(branch_name);
         }
+        self.quit(); // Always quit after attempting checkout
         Ok(())
     }
 }
@@ -86,16 +90,44 @@ fn main() -> Result<()> {
     )?;
 
     let mut app = App::new(branches);
-    if !app.branches.is_empty() {
-        app.state.select(Some(0));
+
+    let initial_selection = get_current_branch()
+        .ok()
+        .flatten()
+        .and_then(|current| app.branches.iter().position(|b| b == &current))
+        .or_else(|| if app.branches.is_empty() { None } else { Some(0) });
+
+    if let Some(selected_index) = initial_selection {
+        app.state.select(Some(selected_index));
     }
 
     run_app(&mut terminal, &mut app)?;
 
     // Restore terminal
     disable_raw_mode()?;
+
+    if let Some(branch_name) = app.last_checked_out_branch {
+        println!("Switched to branch '{}'", branch_name);
+    }
     Ok(())
 }
+
+fn get_current_branch() -> io::Result<Option<String>> {
+    let output = std::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .output()?;
+    if output.status.success() {
+        let branch_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if branch_name.is_empty() {
+            Ok(None) // Detached HEAD or other state
+        } else {
+            Ok(Some(branch_name))
+        }
+    } else {
+        Ok(None)
+    }
+}
+
 
 fn get_git_branches() -> io::Result<Vec<String>> {
     let output = std::process::Command::new("git")
@@ -169,9 +201,7 @@ fn checkout_branch(branch_name: &str) -> io::Result<()> {
         .output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("Error checking out branch: {}", stderr); // Print to stderr for visibility after exit
         return Err(io::Error::new(io::ErrorKind::Other, stderr.to_string()));
     }
-    println!("Switched to branch '{}'", branch_name);
     Ok(())
 }
