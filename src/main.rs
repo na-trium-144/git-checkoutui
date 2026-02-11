@@ -194,7 +194,9 @@ fn get_pr_map() -> io::Result<HashMap<String, u32>> {
 fn get_branch_info() -> io::Result<Vec<BranchInfo>> {
     let pr_map = get_pr_map().unwrap_or_default();
     const DELIMITER: &str = "|";
-    let format = [
+
+    // 1. Get local branches and populate the map
+    let local_format = [
         "%(HEAD)",
         "%(refname:short)",
         "%(upstream:track,nobracket)",
@@ -204,21 +206,17 @@ fn get_branch_info() -> io::Result<Vec<BranchInfo>> {
     ]
     .join(DELIMITER);
 
-    let output = std::process::Command::new("git")
-        .args([
-            "for-each-ref",
-            &format!("--format={}", format),
-            "refs/heads/",
-        ])
+    let local_output = std::process::Command::new("git")
+        .args(["for-each-ref", &format!("--format={}", local_format), "refs/heads/"])
         .output()?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !local_output.status.success() {
+        let stderr = String::from_utf8_lossy(&local_output.stderr);
         return Err(io::Error::new(io::ErrorKind::Other, stderr.to_string()));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut branches: Vec<BranchInfo> = stdout
+    let local_stdout = String::from_utf8_lossy(&local_output.stdout);
+    let mut branches_map: HashMap<String, BranchInfo> = local_stdout
         .lines()
         .filter_map(|line| {
             let parts: Vec<&str> = line.split(DELIMITER).collect();
@@ -229,22 +227,79 @@ fn get_branch_info() -> io::Result<Vec<BranchInfo>> {
                 let has_upstream = !parts[5].trim().is_empty();
                 let pr_number = pr_map.get(&branch_name).copied();
 
-                Some(BranchInfo {
-                    name: branch_name,
+                let info = BranchInfo {
+                    name: branch_name.clone(),
                     tracking_info: parts[2].to_string(),
                     last_commit_date: parts[3].to_string(),
                     last_commit_timestamp: timestamp,
                     has_upstream,
                     pr_number,
                     is_current,
-                })
+                };
+                Some((branch_name, info))
             } else {
                 None
             }
         })
         .collect();
 
-    // Sort by last commit timestamp, newest first
+    // 2. Get remote branches and merge/update info
+    let remote_format = [
+        "%(refname)",
+        "%(refname:short)",
+        "%(committerdate:relative)",
+        "%(committerdate:unix)",
+    ]
+    .join(DELIMITER);
+
+    let remote_output = std::process::Command::new("git")
+        .args(["for-each-ref", &format!("--format={}", remote_format), "refs/remotes/"])
+        .output()?;
+
+    if remote_output.status.success() {
+        let remote_stdout = String::from_utf8_lossy(&remote_output.stdout);
+        remote_stdout.lines().for_each(|line| {
+            let parts: Vec<&str> = line.split(DELIMITER).collect();
+            if parts.len() == 4 {
+                let full_ref_name = parts[0].trim();
+                if full_ref_name.ends_with("/HEAD") {
+                    return;
+                }
+
+                let remote_ref_name = parts[1].trim();
+                let short_name = match remote_ref_name.split_once('/') {
+                    Some((_, branch)) => branch,
+                    None => remote_ref_name,
+                };
+
+                let remote_last_commit_date = parts[2].to_string();
+                let remote_timestamp = parts[3].parse::<i64>().unwrap_or(0);
+
+                if let Some(existing_branch) = branches_map.get_mut(short_name) {
+                    // Branch exists locally, update if remote is newer
+                    if remote_timestamp > existing_branch.last_commit_timestamp {
+                        existing_branch.last_commit_timestamp = remote_timestamp;
+                        existing_branch.last_commit_date = remote_last_commit_date;
+                    }
+                } else {
+                    // Branch is remote-only, add it.
+                    let pr_number = pr_map.get(short_name).copied();
+                    let info = BranchInfo {
+                        name: short_name.to_string(),
+                        tracking_info: "remote".to_string(),
+                        last_commit_date: remote_last_commit_date,
+                        last_commit_timestamp: remote_timestamp,
+                        has_upstream: true, // It is an upstream branch
+                        pr_number,
+                        is_current: false,
+                    };
+                    branches_map.insert(short_name.to_string(), info);
+                }
+            }
+        });
+    }
+
+    let mut branches: Vec<BranchInfo> = branches_map.into_values().collect();
     branches.sort_by(|a, b| b.last_commit_timestamp.cmp(&a.last_commit_timestamp));
 
     Ok(branches)
